@@ -25,7 +25,7 @@ def invert(img_array: np.ndarray) -> np.ndarray:
 
 
 def flip_horizontal(img_array: np.ndarray) -> np.ndarray:
-    return img_array[:, ::-1, :]
+    return img_array[:, ::-1]
 
 
 def crop(img_array: np.ndarray, params: dict) -> np.ndarray:
@@ -41,7 +41,7 @@ def crop(img_array: np.ndarray, params: dict) -> np.ndarray:
         )
     row_end = h - bottom if bottom > 0 else h
     col_end = w - right if right > 0 else w
-    return img_array[top:row_end, left:col_end, :]
+    return img_array[top:row_end, left:col_end]
 
 
 def brightness(img_array: np.ndarray, params: dict) -> np.ndarray:

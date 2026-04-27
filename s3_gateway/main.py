@@ -1,19 +1,46 @@
 import json
 import os
+import re
 import shutil
 import uuid
 from pathlib import Path
 
-import aiofiles
 import redis.asyncio as aioredis
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "./storage"))
+STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "./storage")).resolve()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 JOBS_QUEUE = "image.jobs"
+
+# Only allow safe name segments: alphanumeric, hyphens, underscores, dots
+# (no path separators, no null bytes, no "..")
+_SAFE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _safe_name(name: str, label: str) -> str:
+    """Validate that a bucket or object name is safe (no path traversal)."""
+    if not name or not _SAFE_NAME_RE.match(name) or ".." in name:
+        raise HTTPException(status_code=400, detail=f"Invalid {label} name")
+    return name
+
+
+def _resolve_bucket(bucket_id: str) -> Path:
+    path = (STORAGE_PATH / _safe_name(bucket_id, "bucket_id")).resolve()
+    if not str(path).startswith(str(STORAGE_PATH)):
+        raise HTTPException(status_code=400, detail="Invalid bucket_id")
+    return path
+
+
+def _resolve_object(bucket_id: str, object_id: str) -> Path:
+    bucket_path = _resolve_bucket(bucket_id)
+    path = (bucket_path / _safe_name(object_id, "object_id")).resolve()
+    if not str(path).startswith(str(bucket_path)):
+        raise HTTPException(status_code=400, detail="Invalid object_id")
+    return path
+
 
 app = FastAPI(title="S3 Gateway")
 
@@ -24,19 +51,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-redis_client: aioredis.Redis = None
-
 
 @app.on_event("startup")
 async def startup() -> None:
-    global redis_client
-    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+    app.state.redis = aioredis.from_url(REDIS_URL, decode_responses=True)
     STORAGE_PATH.mkdir(parents=True, exist_ok=True)
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    await redis_client.aclose()
+    await app.state.redis.aclose()
 
 
 # ── Bucket models ──────────────────────────────────────────────────────────────
@@ -54,7 +78,7 @@ class ProcessRequest(BaseModel):
 
 @app.post("/buckets", status_code=201)
 async def create_bucket(body: BucketCreate):
-    bucket_path = STORAGE_PATH / body.bucket_id
+    bucket_path = _resolve_bucket(body.bucket_id)
     if bucket_path.exists():
         raise HTTPException(status_code=409, detail="Bucket already exists")
     bucket_path.mkdir(parents=True)
@@ -73,7 +97,7 @@ async def list_buckets():
 
 @app.delete("/buckets/{bucket_id}", status_code=204)
 async def delete_bucket(bucket_id: str):
-    bucket_path = STORAGE_PATH / bucket_id
+    bucket_path = _resolve_bucket(bucket_id)
     if not bucket_path.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
     shutil.rmtree(bucket_path)
@@ -82,20 +106,22 @@ async def delete_bucket(bucket_id: str):
 # ── Object endpoints ───────────────────────────────────────────────────────────
 
 @app.post("/buckets/{bucket_id}/objects", status_code=201)
-async def upload_object(bucket_id: str, file: UploadFile = File(...)):
-    bucket_path = STORAGE_PATH / bucket_id
+async def upload_object(request: Request, bucket_id: str, file: UploadFile = File(...)):
+    bucket_path = _resolve_bucket(bucket_id)
     if not bucket_path.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
-    dest = bucket_path / file.filename
-    async with aiofiles.open(dest, "wb") as f:
-        content = await file.read()
-        await f.write(content)
-    return {"object_id": file.filename, "bucket_id": bucket_id}
+    safe_filename = _safe_name(file.filename, "object_id")
+    dest = (bucket_path / safe_filename).resolve()
+    if not str(dest).startswith(str(bucket_path)):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    content = await file.read()
+    dest.write_bytes(content)
+    return {"object_id": safe_filename, "bucket_id": bucket_id}
 
 
 @app.get("/buckets/{bucket_id}/objects")
 async def list_objects(bucket_id: str):
-    bucket_path = STORAGE_PATH / bucket_id
+    bucket_path = _resolve_bucket(bucket_id)
     if not bucket_path.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
     objects = [
@@ -108,7 +134,7 @@ async def list_objects(bucket_id: str):
 
 @app.get("/buckets/{bucket_id}/objects/{object_id}")
 async def download_object(bucket_id: str, object_id: str):
-    file_path = STORAGE_PATH / bucket_id / object_id
+    file_path = _resolve_object(bucket_id, object_id)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Object not found")
     return FileResponse(str(file_path))
@@ -116,18 +142,18 @@ async def download_object(bucket_id: str, object_id: str):
 
 @app.delete("/buckets/{bucket_id}/objects/{object_id}", status_code=204)
 async def delete_object(bucket_id: str, object_id: str):
-    file_path = STORAGE_PATH / bucket_id / object_id
+    file_path = _resolve_object(bucket_id, object_id)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Object not found")
     file_path.unlink()
 
 
 @app.post("/buckets/{bucket_id}/objects/{object_id}/process")
-async def process_object(bucket_id: str, object_id: str, body: ProcessRequest):
-    bucket_path = STORAGE_PATH / bucket_id
+async def process_object(request: Request, bucket_id: str, object_id: str, body: ProcessRequest):
+    bucket_path = _resolve_bucket(bucket_id)
     if not bucket_path.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
-    file_path = bucket_path / object_id
+    file_path = _resolve_object(bucket_id, object_id)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Object not found")
 
@@ -139,5 +165,5 @@ async def process_object(bucket_id: str, object_id: str, body: ProcessRequest):
         "operation": body.operation,
         "params": body.params,
     })
-    await redis_client.lpush(JOBS_QUEUE, message)
+    await request.app.state.redis.lpush(JOBS_QUEUE, message)
     return {"status": "processing_started", "job_id": job_id}

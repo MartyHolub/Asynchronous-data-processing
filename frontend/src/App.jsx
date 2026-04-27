@@ -102,7 +102,7 @@ export default function App() {
           <div className="grid">
             {objects.map(obj => (
               <div key={obj.object_id} className="obj-card">
-                <img src={`${API}/buckets/${activeBucket}/objects/${obj.object_id}`} alt={obj.object_id} />
+                <img src={`${API}/buckets/${encodeURIComponent(activeBucket)}/objects/${encodeURIComponent(obj.object_id)}`} alt={obj.object_id} />
                 <p className="obj-name">{obj.object_id}</p>
                 <div className="ops">
                   {OPERATIONS.map(op => (
