@@ -120,8 +120,8 @@ async def process_job(session: aiohttp.ClientSession, redis_client, message: dic
         img_array = await download_image(session, bucket_id, object_id)
         processed = op_fn(img_array, params)
 
-        ext = Path(object_id).suffix
-        stem = Path(object_id).stem
+        ext = Path(object_id).suffix or ".png"
+        stem = Path(object_id).stem or object_id
         new_object_id = f"{stem}_{operation}{ext}"
         await upload_image(session, bucket_id, new_object_id, processed, object_id)
 
