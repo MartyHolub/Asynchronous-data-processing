@@ -1,0 +1,29 @@
+version: '3.9'
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  s3_gateway:
+    build: ./s3_gateway
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/data
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - STORAGE_PATH=/data
+    depends_on:
+      - redis
+
+  worker:
+    build: ./worker
+    volumes:
+      - ./storage:/data
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - S3_GATEWAY_URL=http://s3_gateway:8000
+    depends_on:
+      - redis
+      - s3_gateway

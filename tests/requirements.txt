@@ -1,0 +1,6 @@
+pytest==8.2.0
+pytest-asyncio==0.23.6
+redis==5.0.4
+aiohttp==3.13.3
+Pillow==12.2.0
+numpy==1.26.4

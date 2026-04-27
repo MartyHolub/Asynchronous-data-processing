@@ -1,0 +1,4 @@
+s3_gateway/__pycache__/
+worker/__pycache__/
+__pycache__/
+storage/
