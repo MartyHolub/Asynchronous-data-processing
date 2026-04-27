@@ -7,7 +7,6 @@ import io
 import uuid
 import os
 import pytest
-import pytest_asyncio
 import aiohttp
 import redis.asyncio as aioredis
 import numpy as np

@@ -51,12 +51,22 @@ def brightness(img_array: np.ndarray, params: dict) -> np.ndarray:
 
 
 def grayscale(img_array: np.ndarray) -> np.ndarray:
-    gray = (
-        0.299 * img_array[:, :, 0].astype(np.float32)
-        + 0.587 * img_array[:, :, 1].astype(np.float32)
-        + 0.114 * img_array[:, :, 2].astype(np.float32)
-    )
-    gray_uint8 = gray.astype(np.uint8)
+    # Ensure we have at least 3 channels
+    if img_array.ndim == 2:
+        # Already a single-channel image – stack into 3-channel
+        gray_uint8 = img_array.astype(np.uint8)
+    else:
+        channels = img_array.shape[2]
+        if channels == 1:
+            gray_uint8 = img_array[:, :, 0].astype(np.uint8)
+        else:
+            # Use first 3 channels (handles both RGB and RGBA)
+            gray = (
+                0.299 * img_array[:, :, 0].astype(np.float32)
+                + 0.587 * img_array[:, :, 1].astype(np.float32)
+                + 0.114 * img_array[:, :, 2].astype(np.float32)
+            )
+            gray_uint8 = gray.astype(np.uint8)
     return np.stack([gray_uint8, gray_uint8, gray_uint8], axis=-1)
 
 
