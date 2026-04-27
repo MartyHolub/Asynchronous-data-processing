@@ -101,14 +101,19 @@ def _object_path_from_meta(bucket_id: str, object_id: str) -> tuple[Path, str]:
     """Return (file_path, original_filename) for an existing object.
 
     The filesystem path uses a UUID filename stored in our metadata, so
-    *object_id* never becomes a path component.
+    *object_id* never becomes a path component.  We additionally apply
+    ``os.path.basename`` to the stored filename as a final safety net.
     """
     bucket_dir = _bucket_dir_from_meta(bucket_id)
     objects = _load_objects(bucket_dir)
     if object_id not in objects:
         raise HTTPException(status_code=404, detail="Object not found")
-    # 'file' is a UUID filename written by us – not user-controlled
-    stored_file: str = objects[object_id]["file"]
+    # 'file' is a UUID filename written by us – strip any unexpected path
+    # components with os.path.basename before building the final path.
+    raw_file: str = objects[object_id]["file"]
+    stored_file = os.path.basename(raw_file)
+    if not stored_file:
+        raise HTTPException(status_code=500, detail="Internal storage error")
     return bucket_dir / stored_file, objects[object_id].get("filename", object_id)
 
 
@@ -232,8 +237,9 @@ async def delete_object(bucket_id: str, object_id: str):
     objects = _load_objects(bucket_dir)
     if object_id not in objects:
         raise HTTPException(status_code=404, detail="Object not found")
-    stored_file: str = objects[object_id]["file"]
-    (bucket_dir / stored_file).unlink(missing_ok=True)
+    stored_file = os.path.basename(objects[object_id]["file"])
+    if stored_file:
+        (bucket_dir / stored_file).unlink(missing_ok=True)
     del objects[object_id]
     _save_objects(bucket_dir, objects)
     return Response(status_code=204)
