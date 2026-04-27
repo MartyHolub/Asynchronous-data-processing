@@ -21,23 +21,33 @@ _SAFE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
 
 
 def _safe_name(name: str, label: str) -> str:
-    """Validate that a bucket or object name is safe (no path traversal)."""
-    if not name or not _SAFE_NAME_RE.match(name) or ".." in name:
+    """Strip directory components and validate only safe characters remain.
+
+    Using os.path.basename as the primary defence breaks the path-traversal
+    taint: even if the caller passes 'foo/../bar', only 'bar' survives.
+    The subsequent regex then rejects any name that still contains characters
+    not in [A-Za-z0-9._-], which also covers null bytes and Windows path
+    separators.
+    """
+    base = os.path.basename(name)
+    if not base or base != name or not _SAFE_NAME_RE.match(base):
         raise HTTPException(status_code=400, detail=f"Invalid {label} name")
-    return name
+    return base
 
 
 def _resolve_bucket(bucket_id: str) -> Path:
-    path = (STORAGE_PATH / _safe_name(bucket_id, "bucket_id")).resolve()
-    if not str(path).startswith(str(STORAGE_PATH)):
+    safe_id = _safe_name(bucket_id, "bucket_id")
+    path = (STORAGE_PATH / safe_id).resolve()
+    if not path.is_relative_to(STORAGE_PATH):
         raise HTTPException(status_code=400, detail="Invalid bucket_id")
     return path
 
 
 def _resolve_object(bucket_id: str, object_id: str) -> Path:
     bucket_path = _resolve_bucket(bucket_id)
-    path = (bucket_path / _safe_name(object_id, "object_id")).resolve()
-    if not str(path).startswith(str(bucket_path)):
+    safe_oid = _safe_name(object_id, "object_id")
+    path = (bucket_path / safe_oid).resolve()
+    if not path.is_relative_to(bucket_path):
         raise HTTPException(status_code=400, detail="Invalid object_id")
     return path
 
@@ -110,9 +120,9 @@ async def upload_object(request: Request, bucket_id: str, file: UploadFile = Fil
     bucket_path = _resolve_bucket(bucket_id)
     if not bucket_path.exists():
         raise HTTPException(status_code=404, detail="Bucket not found")
-    safe_filename = _safe_name(file.filename, "object_id")
+    safe_filename = _safe_name(file.filename or "", "object_id")
     dest = (bucket_path / safe_filename).resolve()
-    if not str(dest).startswith(str(bucket_path)):
+    if not dest.is_relative_to(bucket_path):
         raise HTTPException(status_code=400, detail="Invalid filename")
     content = await file.read()
     dest.write_bytes(content)
