@@ -7,10 +7,11 @@ import io
 import uuid
 import os
 import pytest
-import aiohttp
-import redis.asyncio as aioredis
-import numpy as np
-from PIL import Image
+
+aiohttp = pytest.importorskip("aiohttp")
+redis = pytest.importorskip("redis")
+np = pytest.importorskip("numpy")
+Image = pytest.importorskip("PIL.Image")
 
 S3_URL = os.getenv("S3_GATEWAY_URL", "http://localhost:8000")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -32,7 +33,6 @@ def make_test_image_bytes() -> bytes:
 
 @pytest.fixture(scope="module")
 def redis_client():
-    import redis
     client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
     # Clear queues before tests
     client.delete(JOBS_QUEUE)
