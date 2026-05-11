@@ -165,14 +165,22 @@ Integration tests require the S3 Gateway and Redis to be running.
 # Start services
 docker compose up -d redis s3_gateway
 
+# (Recommended) create and activate a local virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
 # Install test dependencies
-pip install -r tests/requirements.txt
+python -m pip install -r tests/requirements.txt
 
 # Run tests
-pytest tests/
+python -m pytest tests/
 ```
 
 The test suite sends 10 concurrent image-processing jobs and verifies that all complete successfully.
+
+If you see a `bad interpreter` error for `pytest`, your virtual environment likely points to a removed Python binary. Recreate the venv (`rm -rf .venv && python3 -m venv .venv`) and run tests with `python -m pytest` to ensure the active interpreter is used.
+
+If pytest reports `collected 0 items / 1 skipped`, install test dependencies from `tests/requirements.txt` in the currently active environment.
 
 ---
 
